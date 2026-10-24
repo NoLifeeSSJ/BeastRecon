@@ -1,4 +1,5 @@
 """Download and convert media without depending on the caller's working directory."""
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
@@ -10,6 +11,7 @@ import sys
 import tempfile
 import threading
 import time
+import unicodedata
 from urllib.parse import urlsplit
 
 FORMATS = ('mp3', 'm4a', 'wav', 'flac', 'mp4', 'webm')
@@ -126,7 +128,89 @@ def _download_error(error):
     return RuntimeError(f'{advice}\n\nDownload details:\n{text[-3000:]}')
 
 
-def _download(source, temporary, extension, progress, cancel):
+@dataclass(frozen=True)
+class MediaInfo:
+    title: str
+    creator: str = ''
+    duration: float | None = None
+
+
+def _media_info(info):
+    duration = info.get('duration')
+    return MediaInfo(str(info.get('title') or 'BeastRecon'),
+                     str(info.get('artist') or info.get('uploader') or info.get('channel') or ''),
+                     float(duration) if duration is not None else None)
+
+
+def _validate_info(info):
+    if not info or info.get('_type') in ('playlist', 'multi_video') or 'entries' in info:
+        raise ValueError('Paste a link to one video, rather than a playlist or channel.')
+    if info.get('is_live') or info.get('live_status') in ('is_live', 'is_upcoming', 'post_live'):
+        raise ValueError('Live or upcoming videos are not supported. Try a finished video.')
+
+
+def _url_options(source, progress, cancel):
+    runtimes = {name: {'path': path} for name in ('deno', 'node') if (path := shutil.which(name))}
+    host = (urlsplit(source).hostname or '').lower()
+    youtube = host == 'youtu.be' or host == 'youtube.com' or host.endswith('.youtube.com')
+    if youtube and not runtimes:
+        raise RuntimeError('YouTube support needs the Deno JavaScript runtime. Rerun Install.ps1 to install it.')
+    return {
+        'noplaylist': True, 'extract_flat': 'in_playlist', 'lazy_playlist': True,
+        'quiet': True, 'noprogress': True, 'no_color': True,
+        'logger': _DownloadLogger(progress, cancel),
+        'socket_timeout': 15, 'retries': 2, 'fragment_retries': 2, 'extractor_retries': 2,
+        'js_runtimes': runtimes,
+    }
+
+
+def inspect_media(source, cancel=None):
+    """Read a title/creator/duration without downloading the media or thumbnails."""
+    prepare_runtime()
+    _check_cancel(cancel)
+    if urlsplit(source).scheme not in ('http', 'https'):
+        media = Path(source).expanduser().resolve()
+        if not media.is_file():
+            raise ValueError('Choose an existing media file or paste a media URL.')
+        return MediaInfo(media.stem)
+    import yt_dlp
+    options = _url_options(source, lambda message: None, cancel)
+    options['format'] = 'bestaudio/best'
+    try:
+        with yt_dlp.YoutubeDL(options) as downloader:
+            info = downloader.extract_info(source, download=False)
+        _check_cancel(cancel)
+        _validate_info(info)
+        return _media_info(info)
+    except yt_dlp.utils.DownloadError as error:
+        _check_cancel(cancel)
+        raise _download_error(error) from error
+
+
+def safe_filename(title):
+    """Keep readable Unicode titles while respecting Windows filename rules."""
+    title = unicodedata.normalize('NFC', str(title))
+    title = re.sub(r'[<>:"/\\|?*\x00-\x1f\x7f]', ' ', title)
+    title = re.sub(r'\s+', ' ', title).strip(' .')
+    title = title.encode('utf-8')[:160].decode('utf-8', errors='ignore').rstrip(' .') or 'BeastRecon'
+    if re.fullmatch(r'(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])', title.split('.')[0].rstrip(' .').upper()):
+        title = '_' + title
+    return title
+
+
+def unique_destination(directory, title, extension):
+    if extension not in FORMATS:
+        raise ValueError('Unsupported output format')
+    stem = safe_filename(title)
+    target = Path(directory) / f'{stem}.{extension}'
+    number = 2
+    while target.exists() or target.is_symlink():
+        target = Path(directory) / f'{stem} ({number}).{extension}'
+        number += 1
+    return target
+
+
+def _download(source, temporary, extension, progress, cancel, on_metadata=None):
     try:
         import yt_dlp
     except ImportError:
@@ -160,34 +244,23 @@ def _download(source, temporary, extension, progress, cancel):
         if data['status'] == 'started':
             progress('Preparing downloaded media…')
 
-    runtimes = {name: {'path': path} for name in ('deno', 'node') if (path := shutil.which(name))}
-    # Fail early for YouTube instead of waiting for incomplete format extraction.
-    host = (urlsplit(source).hostname or '').lower()
-    youtube = host == 'youtu.be' or host == 'youtube.com' or host.endswith('.youtube.com')
-    if youtube and not runtimes:
-        raise RuntimeError('YouTube support needs the Deno JavaScript runtime. Rerun Install.ps1 to install it.')
-    options = {
+    options = _url_options(source, progress, cancel)
+    options.update({
         'format': 'bestaudio/best' if audio_only else 'bestvideo*+bestaudio/best',
         'merge_output_format': 'mkv',
-        'noplaylist': True, 'extract_flat': 'in_playlist', 'lazy_playlist': True,
-        'quiet': True, 'noprogress': True, 'no_color': True,
-        'logger': _DownloadLogger(progress, cancel),
         'restrictfilenames': True,
         'outtmpl': str(Path(temporary) / 'source.%(ext)s'),
-        'socket_timeout': 15, 'retries': 2, 'fragment_retries': 2, 'extractor_retries': 2,
         'concurrent_fragment_downloads': 1,
-        'js_runtimes': runtimes,
         'progress_hooks': [hook], 'postprocessor_hooks': [postprocess_hook],
-    }
+    })
     progress('Reading media details…')
     try:
         with yt_dlp.YoutubeDL(options) as downloader:
             info = downloader.extract_info(source, download=False)
             _check_cancel(cancel)
-            if not info or info.get('_type') in ('playlist', 'multi_video') or 'entries' in info:
-                raise ValueError('Paste a link to one video, rather than a playlist or channel.')
-            if info.get('is_live') or info.get('live_status') in ('is_live', 'is_upcoming', 'post_live'):
-                raise ValueError('Live or upcoming videos are not supported. Try a finished video.')
+            _validate_info(info)
+            if on_metadata is not None:
+                on_metadata(_media_info(info))
             progress(f"{label}… {info.get('title') or 'media'}")
             downloader.process_ie_result(info, download=True)
     except yt_dlp.utils.DownloadError as error:
@@ -202,25 +275,45 @@ def _download(source, temporary, extension, progress, cancel):
 
 
 def convert(source, destination, progress=lambda message: None, cancel=None):
+    return _convert(source, Path(destination), progress, cancel)
+
+
+def convert_to_folder(source, directory, extension, progress=lambda message: None, cancel=None, on_metadata=None):
+    """Save using the actual media title, keeping existing files intact."""
+    return _convert(source, None, progress, cancel, directory=directory,
+                    extension=extension, on_metadata=on_metadata)
+
+
+def _convert(source, destination, progress, cancel, *, directory=None, extension=None, on_metadata=None):
     prepare_runtime()
     _check_cancel(cancel)
-    target = Path(destination).expanduser().resolve()
-    extension = target.suffix.lower().lstrip('.')
+    target = destination.expanduser().resolve() if destination is not None else None
+    if target is not None:
+        extension = target.suffix.lower().lstrip('.')
+    else:
+        directory = Path(directory).expanduser().resolve()
+        directory.mkdir(parents=True, exist_ok=True)
     if extension not in FORMATS:
         raise ValueError('Unsupported output format')
     for binary in ('ffmpeg', 'ffprobe'):
         if not shutil.which(binary):
             raise RuntimeError(f'{binary} is missing. Rerun Install.ps1 to install FFmpeg.')
-    if target.exists():
+    if target is not None and target.exists():
         raise ValueError('Output already exists. Choose a new filename.')
-    if not target.parent.is_dir():
+    if target is not None and not target.parent.is_dir():
         raise ValueError('Output folder does not exist.')
+    title = 'BeastRecon'
+    def metadata(info):
+        nonlocal title
+        title = info.title
+        if on_metadata is not None:
+            on_metadata(info)
     with tempfile.TemporaryDirectory(prefix='beastrecon-') as temporary:
         parsed = urlsplit(source)
         if parsed.scheme in ('http', 'https'):
             if not parsed.hostname:
                 raise ValueError('Enter a valid HTTP or HTTPS URL.')
-            media = _download(source, temporary, extension, progress, cancel)
+            media = _download(source, temporary, extension, progress, cancel, metadata)
         else:
             media = Path(source).expanduser().resolve()
             if not media.is_file():
@@ -229,9 +322,12 @@ def convert(source, destination, progress=lambda message: None, cancel=None):
                 raise ValueError('Input and output must be different files.')
         _check_cancel(cancel)
         progress('Checking downloaded media…')
-        metadata = json.loads(run(['ffprobe', '-v', 'error', '-show_streams', '-show_format', '-of', 'json', str(media)]))
-        streams = metadata['streams']
-        duration = float(metadata.get('format', {}).get('duration') or 0)
+        probe = json.loads(run(['ffprobe', '-v', 'error', '-show_streams', '-show_format', '-of', 'json', str(media)]))
+        streams = probe['streams']
+        duration = float(probe.get('format', {}).get('duration') or 0)
+        if parsed.scheme not in ('http', 'https'):
+            tags = probe.get('format', {}).get('tags', {})
+            metadata(MediaInfo(tags.get('title') or media.stem, tags.get('artist') or '', duration))
         video = any(s['codec_type'] == 'video' for s in streams)
         audio = any(s['codec_type'] == 'audio' for s in streams)
         command = ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-nostdin', '-n',
@@ -256,18 +352,24 @@ def convert(source, destination, progress=lambda message: None, cancel=None):
         _transcode(command + [str(staged)], duration, progress, cancel)
         _check_cancel(cancel)
         progress('Saving converted file…')
-        # Exclusive creation prevents overwriting files created while converting.
-        created = False
+        # Reserve the name only after conversion. A concurrent download may have
+        # claimed it since metadata was read; select the next suffix in that case.
+        while True:
+            if destination is None:
+                target = unique_destination(directory, title, extension)
+            try:
+                output = target.open('xb')
+                break
+            except FileExistsError:
+                if destination is not None:
+                    raise ValueError('Output already exists. Choose a new filename.') from None
         try:
-            with target.open('xb') as output:
-                created = True
-                with staged.open('rb') as converted:
-                    while chunk := converted.read(1024 * 1024):
-                        _check_cancel(cancel)
-                        output.write(chunk)
+            with output, staged.open('rb') as converted:
+                while chunk := converted.read(1024 * 1024):
+                    _check_cancel(cancel)
+                    output.write(chunk)
         except BaseException:
-            if created:
-                target.unlink(missing_ok=True)
+            target.unlink(missing_ok=True)
             raise
     progress(f'Saved: {target}')
     return target

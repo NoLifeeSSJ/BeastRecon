@@ -27,16 +27,18 @@ function Find-Python {
     return $null
 }
 
-$temporary = Join-Path ([IO.Path]::GetTempPath()) ('BeastRecon-' + [guid]::NewGuid())
+$install = 'C:\BeastRecon'
+$temporary = Join-Path $install ('.updates\' + [guid]::NewGuid())
 try {
-    $install = Join-Path $env:LOCALAPPDATA 'BeastRecon'
+    New-Item -ItemType Directory -Path $install -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $install 'Downloads') -Force | Out-Null
     New-Item -ItemType Directory -Path $temporary -Force | Out-Null
     Write-Host 'Downloading BeastRecon...'
     $archive = Join-Path $temporary 'app.zip'
     Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/NoLifeeSSJ/BeastRecon/archive/refs/heads/main.zip' -OutFile $archive
     Expand-Archive -Path $archive -DestinationPath $temporary
     $source = Join-Path $temporary 'BeastRecon-main'
-    $files = @('app.py', 'converter.py', 'requirements.txt', 'BeastRecon.ico', 'Install.ps1', 'README.md')
+    $files = @('app.py', 'converter.py', 'preferences.py', 'CHANGELOG.md', 'requirements.txt', 'BeastRecon.ico', 'Install.ps1', 'README.md')
     foreach ($file in $files) {
         if (-not (Test-Path (Join-Path $source $file))) { throw "Download is missing $file" }
     }
@@ -96,10 +98,10 @@ try {
         $shortcut.Arguments = '"' + (Join-Path $install 'app.py') + '"'
         $shortcut.WorkingDirectory = $install
         $shortcut.IconLocation = (Join-Path $install 'BeastRecon.ico') + ',0'
-        $shortcut.Description = 'BeastRecon Media Converter'
+        $shortcut.Description = 'BeastRecon V1.1 Media Converter'
         $shortcut.Save()
     }
-    Write-Host "Installed and tested successfully in $install" -ForegroundColor Green
+    Write-Host "BeastRecon V1.1 installed and tested successfully in $install" -ForegroundColor Green
     Write-Host 'Desktop and Start menu shortcuts created. To pin: right-click the running taskbar icon and choose Pin to taskbar.'
     Start-Process -FilePath $pythonw -ArgumentList ('"' + (Join-Path $install 'app.py') + '"') -WorkingDirectory $install
 } catch {

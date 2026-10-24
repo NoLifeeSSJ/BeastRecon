@@ -128,3 +128,32 @@ class DownloadTests(unittest.TestCase):
         with patch('converter.shutil.which', return_value=None):
             with self.assertRaisesRegex(RuntimeError, 'Deno.*Install.ps1'):
                 _download('https://www.youtube.com/watch?v=fixture', self.root, 'mp3', lambda m: None, None)
+
+    def test_title_preview_reads_metadata_without_downloading(self):
+        from converter import inspect_media
+        with patch('yt_dlp.YoutubeDL') as factory:
+            downloader = factory.return_value.__enter__.return_value
+            downloader.extract_info.return_value = {'title': 'Test Song', 'uploader': 'Artist', 'duration': 125}
+            info = inspect_media('https://youtu.be/fixture')
+            downloader.extract_info.assert_called_once_with('https://youtu.be/fixture', download=False)
+            downloader.process_ie_result.assert_not_called()
+        self.assertEqual((info.title, info.creator, info.duration), ('Test Song', 'Artist', 125))
+
+    def test_download_uses_actual_title_and_numbers_duplicates(self):
+        from converter import convert_to_folder
+        metadata = []
+        with patch('yt_dlp.YoutubeDL') as factory:
+            downloader = factory.return_value.__enter__.return_value
+            downloader.extract_info.return_value = {'title': 'Artist: Song / live?', 'uploader': 'Artist'}
+            def download(*args, **kwargs):
+                template = factory.call_args.args[0]['outtmpl']
+                shutil.copyfile(self.source, template.replace('%(ext)s', 'wav'))
+            downloader.process_ie_result.side_effect = download
+            first = convert_to_folder('https://youtu.be/fixture', self.root / 'Downloads', 'mp3', on_metadata=metadata.append)
+            before = first.read_bytes()
+            second = convert_to_folder('https://youtu.be/fixture', self.root / 'Downloads', 'mp3')
+        self.assertEqual(first.name, 'Artist Song live.mp3')
+        self.assertEqual(second.name, 'Artist Song live (2).mp3')
+        self.assertEqual(first.read_bytes(), before)
+        self.assertEqual(metadata[0].title, 'Artist: Song / live?')
+        self.assertEqual(downloader.extract_info.call_count, 2)

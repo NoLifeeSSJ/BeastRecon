@@ -4,3 +4,7 @@ __pycache__/
 build/
 dist/
 *.spec
+preferences.json
+.preferences-*.tmp
+Downloads/
+.updates/
