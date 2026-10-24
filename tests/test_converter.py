@@ -30,3 +30,16 @@ class ConversionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 convert(str(Path(directory) / 'missing.wav'), target)
             self.assertFalse(target.exists())
+
+    def test_every_output_format_contains_decodable_audio(self):
+        from converter import FORMATS
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'input.wav'
+            subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'sine=duration=0.2', str(source)], check=True)
+            for extension in FORMATS:
+                with self.subTest(extension=extension):
+                    output = convert(str(source), root / ('result.' + extension))
+                    streams = json.loads(subprocess.check_output(['ffprobe', '-v', 'error', '-show_streams', '-of', 'json', str(output)]))['streams']
+                    self.assertTrue(any(s['codec_type'] == 'audio' for s in streams))
+                    subprocess.run(['ffmpeg', '-v', 'error', '-i', str(output), '-f', 'null', '-'], check=True)

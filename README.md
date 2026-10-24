@@ -1,40 +1,66 @@
 # BeastRecon Media Converter
 
-A native Python desktop app for converting local media and media URLs to MP3, M4A, WAV, FLAC, MP4, or WebM. URL support uses yt-dlp; site availability varies. MP3 to MP4 adds a black video background. DRM-protected sources are unsupported.
+A Python desktop app for converting a YouTube/media URL or local file to MP3, M4A, WAV, FLAC, MP4, or WebM. MP3 downloads select the audio stream where available, avoiding the full video download. Audio-to-video conversion creates a black video background.
 
-## Run
+## Windows: install or update
 
-Install Python 3.10+ with Tk and FFmpeg (both `ffmpeg` and `ffprobe` must be on PATH). On Windows, Python's standard installer includes Tk; FFmpeg can be installed with `winget install Gyan.FFmpeg` followed by opening a new terminal. On Ubuntu, install `python3-tk python3-venv ffmpeg`.
+Close BeastRecon first. Paste this entire block into PowerShell from any folder:
 
-On Windows, run `powershell -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1` to install Python, FFmpeg, and the app dependencies using winget, then launch the app. App Installer (winget) is required. The installer may ask you to reopen PowerShell after installing prerequisites.
+```powershell
+& {
+    $ErrorActionPreference = 'Stop'
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $installer = Join-Path $env:TEMP ('BeastRecon-Install-' + [guid]::NewGuid() + '.ps1')
+    try {
+        Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/NoLifeeSSJ/BeastRecon/main/Install.ps1' -OutFile $installer
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
+        if ($LASTEXITCODE -ne 0) { throw 'Installation failed. Check the error above.' }
+    } finally {
+        Remove-Item $installer -ErrorAction SilentlyContinue
+    }
+}
+```
 
-For later launches, double-click `Start-Windows.bat` after installing Python and FFmpeg. It creates a virtual environment, installs URL support, and opens the app.
+The installer downloads the app into `%LOCALAPPDATA%\BeastRecon`, installs Python and FFmpeg if missing, and updates yt-dlp with its official JavaScript solver and Deno runtime extras. It checks Tk, Deno, and a real local audio conversion before reporting success. It repairs a broken app virtual environment while keeping a backup, leaves unrelated Python environments alone, and creates Desktop and Start menu shortcuts with the BeastRecon icon. App Installer (winget) is needed to install missing Python/FFmpeg prerequisites.
 
-For manual setup, from this repository:
+Launch with the Desktop or Start menu shortcut. To pin the app, right-click its running taskbar icon and choose **Pin to taskbar**. Windows controls pinning. The Windows installer and shortcuts still require testing on Windows; development checks run on Linux.
+
+## Convert and play
+
+1. Paste one video URL (including YouTube watch/Shorts/youtu.be links) or browse for a local file.
+2. Select **MP3** for audio, or another output format.
+3. Choose **Convert and save**, then choose a new filename. Existing files are never overwritten.
+4. Watch the activity details, download percentage/speed where available, and conversion progress. **Cancel** stops the job; a pending network request may take time to return.
+5. When saving finishes, choose **Play file** to open your default media player or **Open folder** to locate the result. Playback uses your installed player.
+
+Downloads and intermediate files are temporary. Failed or cancelled conversions do not keep a partial output file. Large files need space for both the downloaded media and the converted output. Closing the app during conversion asks to cancel and waits for cleanup.
+
+## YouTube troubleshooting
+
+- Close the app and rerun the installer above to update yt-dlp, yt-dlp-ejs, and Deno. YouTube changes frequently; these components must stay current.
+- If a conversion fails, use **Copy details** and include the text when reporting the problem. The activity panel includes download notices and the final error.
+- An account requirement, age/region restriction, network proxy, or YouTube anti-bot verification can still prevent downloads. The app shows specific guidance; it does not bypass those restrictions or automatically read browser cookies.
+- Playlists, channels, live/upcoming videos, and DRM-protected media are unsupported. For a URL that includes both a video and a playlist, only the video is selected.
+- Use media you own or have permission to download. Not every site supported by yt-dlp guarantees a downloadable file.
+
+## Manual development
+
+Install Python 3.10+ with Tk, and FFmpeg (`ffmpeg` and `ffprobe` on PATH). Ubuntu/Debian package names are `python3-tk python3-venv ffmpeg`. Windows Python's standard installer includes Tk; FFmpeg can be installed with `winget install Gyan.FFmpeg`.
+
+From this repository:
 
 ```sh
 python -m venv .venv
 ```
 
-Activate with `.venv\Scripts\activate` on Windows or `source .venv/bin/activate` on Linux/macOS, then:
+Activate with `.venv\Scripts\activate` on Windows or `source .venv/bin/activate` on Linux/macOS:
 
 ```sh
-python -m pip install -r requirements.txt
+python -m pip install --upgrade -r requirements.txt
 python app.py
 ```
 
-Paste a URL or browse for a file, choose the output format, and click **Convert and save**. Existing output files are never overwritten; choose a new filename. Downloads use temporary storage and are removed after conversion. Large files need enough space for both input and output. Conversion runs in the background; closing the app interrupts it.
-
-## Optional executable
-
-On the target operating system, inside the activated environment:
-
-```sh
-python -m pip install pyinstaller
-pyinstaller --windowed --onefile --name BeastRecon --collect-all yt_dlp app.py
-```
-
-The executable appears in `dist`. FFmpeg must still be installed on the user's PATH. Cross-platform executable builds are not supported by PyInstaller; build Windows executables on Windows.
+`Start-Windows.bat` is also available for launching from a source checkout. The application discovers the virtual environment's Deno binary even when launched through `pythonw.exe` without activation. No standalone `.exe` release is provided; packaging would also need to bundle the JavaScript runtime and solver.
 
 ## Validate
 
@@ -42,10 +68,6 @@ The executable appears in `dist`. FFmpeg must still be installed on the user's P
 python -m unittest discover -s tests -v
 ```
 
-The integration tests require FFmpeg. URL downloads additionally require Internet access; no external sites are contacted by the tests. Use media you own or have permission to download.
+Tests exercise FFmpeg conversions and decoding for every output format, local HTTP download-to-MP3, audio/video download selection, cancellation/partial-file cleanup, and restriction/error handling. YouTube option-selection tests use fixtures; they do not prove live YouTube access. Desktop tests require a display and otherwise report as skipped; under Xvfb they exercise conversion, playback/file-manager dispatch, cancellation, and copied error details. Windows media-player launching still needs a check on Windows.
 
-## Windows installer and shortcuts
-
-`Install.ps1` now runs from any folder. It downloads the application into `%LOCALAPPDATA%\BeastRecon`, installs missing prerequisites, repairs a broken app virtual environment (keeping a backup), checks Tk and an actual audio conversion, then creates Desktop and Start menu shortcuts with the BeastRecon icon. Rerun it to update or repair the installation. It leaves unrelated Python environments alone.
-
-Windows controls taskbar pinning: launch BeastRecon, right-click its taskbar icon, and choose **Pin to taskbar**. The installer does not use unsupported pinning hacks. Windows installation and shortcut behavior still require testing on Windows.
+Live YouTube testing in the cloud workspace was blocked by its network proxy (HTTP 403), so the YouTube end-to-end check must be completed on a connection that permits YouTube access.

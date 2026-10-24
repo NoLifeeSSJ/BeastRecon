@@ -1,1 +1,1 @@
-yt-dlp>=2025.1.26
+yt-dlp[default,deno]>=2026.10.21

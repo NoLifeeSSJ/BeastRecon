@@ -74,7 +74,10 @@ try {
         Invoke-Checked { & $python -m venv $venv }
     }
     Invoke-Checked { & $runtime -m pip install --upgrade -r (Join-Path $install 'requirements.txt') }
-    Invoke-Checked { & $runtime -c 'import tkinter, yt_dlp; r=tkinter.Tk(); r.withdraw(); r.destroy()' }
+    Invoke-Checked { & $runtime -c 'import tkinter, yt_dlp, yt_dlp_ejs; r=tkinter.Tk(); r.withdraw(); r.destroy()' }
+    # YouTube's JavaScript solver needs a runtime; install it via yt-dlp's official Deno extra.
+    Invoke-Checked { & $runtime -m deno --version }
+    $env:Path = (Join-Path $venv 'Scripts') + ';' + $env:Path
     # Functional conversion check, using absolute paths independent of the caller's folder.
     $sample = Join-Path $temporary 'sample.wav'
     $output = Join-Path $temporary 'sample.mp3'
