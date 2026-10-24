@@ -1,4 +1,6 @@
 """BeastRecon desktop media converter."""
+import os
+from pathlib import Path
 import queue
 import threading
 import tkinter as tk
@@ -7,7 +9,16 @@ from converter import FORMATS, convert
 
 
 def main():
+    if os.name == 'nt':
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('BeastRecon.MediaConverter')
+        # winget links may not be inherited by Explorer until the next login.
+        links = Path(os.environ.get('LOCALAPPDATA', '')) / 'Microsoft/WinGet/Links'
+        os.environ['PATH'] = str(links) + os.pathsep + os.environ.get('PATH', '')
     root = tk.Tk()
+    icon = Path(__file__).with_name('BeastRecon.ico')
+    if os.name == 'nt' and icon.exists():
+        root.iconbitmap(str(icon))
     root.title('BeastRecon • Media Converter')
     root.geometry('740x360')
     root.minsize(600, 360)

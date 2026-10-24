@@ -43,3 +43,9 @@ python -m unittest discover -s tests -v
 ```
 
 The integration tests require FFmpeg. URL downloads additionally require Internet access; no external sites are contacted by the tests. Use media you own or have permission to download.
+
+## Windows installer and shortcuts
+
+`Install.ps1` now runs from any folder. It downloads the application into `%LOCALAPPDATA%\BeastRecon`, installs missing prerequisites, repairs a broken app virtual environment (keeping a backup), checks Tk and an actual audio conversion, then creates Desktop and Start menu shortcuts with the BeastRecon icon. Rerun it to update or repair the installation. It leaves unrelated Python environments alone.
+
+Windows controls taskbar pinning: launch BeastRecon, right-click its taskbar icon, and choose **Pin to taskbar**. The installer does not use unsupported pinning hacks. Windows installation and shortcut behavior still require testing on Windows.
